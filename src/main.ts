@@ -1,12 +1,14 @@
-import { PluginSettingsManager, PluginTranscodingManager } from "@peertube/peertube-types"
+import { PluginSettingsManager, PluginTranscodingManager, PeerTubeHelpers } from "@peertube/peertube-types"
 import { EncoderOptions, EncoderOptionsBuilderParams, RegisterServerOptions, VideoResolution } from "@peertube/peertube-types"
 import { Logger } from 'winston'
 
 let logger : Logger
 let transcodingManager : PluginTranscodingManager
+let help : PeerTubeHelpers
 
 const DEFAULT_HARDWARE_DECODE : boolean = false
 const DEFAULT_QUALITY : number = -1
+const DEFAULT_RC_MODE : string = ""
 const DEFAULT_BITRATES : Map<VideoResolution, number> = new Map([
     [VideoResolution.H_NOVIDEO, 64 * 1000],
     [VideoResolution.H_144P, 320 * 1000],
@@ -22,11 +24,13 @@ interface PluginSettings {
     hardwareDecode : boolean
     quality: number
     baseBitrate: Map<VideoResolution, number>
+    rcMode: string
 }
 let pluginSettings : PluginSettings = {
     hardwareDecode: DEFAULT_HARDWARE_DECODE,
     quality: DEFAULT_QUALITY,
-    baseBitrate: new Map(DEFAULT_BITRATES)
+    baseBitrate: new Map(DEFAULT_BITRATES),
+    rcMode: DEFAULT_RC_MODE
 }
 
 let latestStreamNum = 9999
@@ -34,7 +38,7 @@ let latestStreamNum = 9999
 export async function register({settingsManager, peertubeHelpers, transcodingManager: transcode, registerSetting} :RegisterServerOptions) {
     logger = peertubeHelpers.logger
     transcodingManager = transcode
-
+    help = peertubeHelpers
     logger.info("Registering peertube-plugin-hardware-encode");
 
     const encoder = 'h264_vaapi'
@@ -93,6 +97,26 @@ export async function register({settingsManager, peertubeHelpers, transcodingMan
            
         private: true,
     })
+
+    registerSetting({
+        name: 'rc-mode',
+        label: 'RC Mode',
+
+        type: 'select',
+        options: [
+            { label: 'Automatic', value: '' },
+            { label: 'CQP', value: 'CQP' },
+            { label: 'AVBR', value: 'AVBR' },
+            { label: 'VBR', value: 'VBR' },
+            { label: 'CBR', value: 'CBR' }
+        ],
+
+        descriptionHTML: 'This parameter controls RC Mode.Default empty.',
+
+        default: DEFAULT_RC_MODE,
+        private: false
+    })
+
     for (const [resolution, bitrate] of pluginSettings.baseBitrate) {
         logger.info("registering bitrate setting: "+ bitrate.toString())
         registerSetting({
@@ -122,6 +146,7 @@ export async function unregister() {
 async function loadSettings(settingsManager: PluginSettingsManager) {
     pluginSettings.hardwareDecode = await settingsManager.getSetting('hardware-decode') == "true"
     pluginSettings.quality = parseInt(await settingsManager.getSetting('quality') as string) || DEFAULT_QUALITY
+    pluginSettings.rcMode = await settingsManager.getSetting('rc-mode') as string
 
     for (const [resolution, bitrate] of DEFAULT_BITRATES) {
         const key = `base-bitrate-${resolution}`
@@ -169,9 +194,20 @@ async function vodBuilder(params: EncoderOptionsBuilderParams) : Promise<Encoder
     const streamSuffix = streamNum == undefined ? '' : `:${streamNum}`
     let targetBitrate = getTargetBitrate(resolution, fps)
     let shouldInitVaapi = (streamNum == undefined || streamNum <= latestStreamNum)
-
+    let copy=false
     if (targetBitrate > inputBitrate) {
         targetBitrate = inputBitrate
+    }
+    let ffprobe = await help.videos.ffprobe(params.input);
+    logger.debug(`probe ${JSON.stringify(ffprobe)}`)
+    for (let i=0;i<ffprobe.streams.length;i++ ){
+        let stream=ffprobe.streams[i]
+        if(stream.codec_type=="video"
+            && stream.height==params.resolution
+            && stream.codec_name=="h264"
+            && stream.pix_fmt=="yuv420p"){
+            copy=true
+        }
     }
 
     logger.info(`Building encoder options, received ${JSON.stringify(params)}`)
@@ -181,6 +217,7 @@ async function vodBuilder(params: EncoderOptionsBuilderParams) : Promise<Encoder
     }
     // You can also return a promise
     let options : EncoderOptions = {
+        copy: copy,
         scaleFilter: {
             // software decode requires specifying pixel format for hardware filter and upload it to GPU
             name: pluginSettings.hardwareDecode ? 'scale_vaapi' : 'format=nv12,hwupload,scale_vaapi'
@@ -191,6 +228,10 @@ async function vodBuilder(params: EncoderOptionsBuilderParams) : Promise<Encoder
             `-b:v${streamSuffix} ${targetBitrate}`,
             `-bufsize ${targetBitrate * 2}`
         ]
+    }
+    if(pluginSettings.rcMode){
+        options.outputOptions = options.outputOptions || []
+        options.outputOptions.push(`-rc_mode ${pluginSettings.rcMode}`)
     }
     logger.info(`EncoderOptions: ${JSON.stringify(options)}`)
     return options 
@@ -214,7 +255,7 @@ async function liveBuilder(params: EncoderOptionsBuilderParams) : Promise<Encode
     }
 
     // You can also return a promise
-    const options = {
+    let options = {
       scaleFilter: {
         name: pluginSettings.hardwareDecode ? 'scale_vaapi' : 'format=nv12,hwupload,scale_vaapi'
       },
@@ -228,6 +269,9 @@ async function liveBuilder(params: EncoderOptionsBuilderParams) : Promise<Encode
         `-b:v${streamSuffix} ${targetBitrate}`,
         `-bufsize ${targetBitrate * 2}`
       ]
+    }
+    if(pluginSettings.rcMode){
+        options.outputOptions.push(`-rc_mode ${pluginSettings.rcMode}`)
     }
     logger.info(`EncoderOptions: ${JSON.stringify(options)}`)
     return options
