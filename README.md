@@ -1,7 +1,13 @@
 # Hardware h264 encoding using vaapi
 
-This plugin tries to enable hardware accelerated transcoding profiles using vaapi on linux. It should be considered experimental and tinkering will certainly be necessary to make this plugin work on your hardware.
+### Original Project Description
+This plugin is designed to enable hardware-accelerated transcoding profiles using VAAPI (Video Acceleration API) on Linux systems. It's important to note that this is an experimental test project , and significant tinkering will likely be necessary to get it working properly with your specific hardware configuration.
 
+### Enhanced Features
+Building upon the original foundation, this modified version now includes:
+
+1. RC Mode Support : Added support for Rate Control modes, allowing more flexibility in managing video quality and file size during transcoding.
+2. Lossless Original Video Conversion : Implemented a feature that enables lossless conversion of the original video files, preserving the highest possible quality while still benefiting from hardware acceleration when applicable.
 
 For more information on vaapi and hardware acceleration:
 
@@ -15,32 +21,36 @@ Official docker images do not ship with required libraries for hardware transcod
 You can build your own image with the following Dockerfile:
 
 ```Dockerfile
-ARG VERSION=v4.2.0
-FROM chocobozzz/peertube:${VERSION}-bullseye
+ARG VERSION=v6.1.0
+FROM chocobozzz/peertube:${VERSION}-bookworm
 
 
 # install dependencies for vaapi
 RUN 	   apt update \
 	&& apt install -y --no-install-recommends wget apt-transport-https \
-	&& echo "deb http://deb.debian.org/debian/ $( awk -F'=' '/^VERSION_CODENAME=/{ print $NF }' /etc/os-release ) non-free" | tee /etc/apt/sources.list.d/non-free.list \
+	&& echo "deb http://deb.debian.org/debian/ bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list \
+  && echo "deb http://deb.debian.org/debian/ bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list \
+  && echo "deb http://deb.debian.org/debian/ bookworm-backports main contrib non-free non-free-firmware" >> /etc/apt/sources.list \
+  && echo "deb https://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list \
 	&& apt update \
-	&& apt install -y --no-install-recommends vainfo i965-va-driver-shaders \
-	&& apt install -y --no-install-recommends python3 \
-	&& rm /var/lib/apt/lists/* -fR
+	&& apt install -y --no-install-recommends libmfx1 libmfx-tools libva-dev libmfx-dev intel-media-va-driver-non-free vainfo \
+	&& rm /var/lib/apt/lists/* -fR \
+  && sed -i 's/(scaleFilterValue/(scaleFilterValue \&\& !builderResult.result.copy/' ./packages/ffmpeg/dist/shared/presets.js \
+  && sed -i '/find \/data ! -user peertube -exec  chown peertube:peertube {} \\;/a \    if [ -e '/dev/dri/renderD128' ]; then\n        chmod 777 /dev/dri/renderD128\n    fi' /usr/local/bin/entrypoint.sh
 ```
 
-If you are using a recent Intel CPU (generation 8 and newer), replace `i965-va-driver-shaders` by `intel-media-va-driver-non-free`.
+If you are using an older Intel CPU (generation 7 and older), replace `intel-media-va-driver-non-free` by `i965-va-driver-shaders`.
 
 
 # Running the docker image
 
 In order to access the GPU inside docker, the `docker-compose.yml` should be adapted as follow.
 Note that you must find the id of the `render` group on your machine.
-You can use `grep render /etc/group | cut -d':' -f3`  to find the id.
+You can use `grep $(ls -l /dev/dri/renderD128 | awk '{print($4)}') /etc/group | cut -d':' -f3`  to find the id.
 
 
 ```yaml
-version: "2"
+version: "3"
 
 services:
   peertube:
@@ -48,7 +58,7 @@ services:
     build:
       context: .
       args:
-        VERSION: v5.0.1
+        VERSION: v6.1.0
     # usual peertube configuration
     # ...
 

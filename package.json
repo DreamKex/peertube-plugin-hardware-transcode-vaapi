@@ -2,7 +2,7 @@
     "name": "peertube-plugin-hardware-transcode-vaapi",
     "version": "0.2.9",
     "license": "MIT",
-    "description": "Plugin that adds transcode profiles which use vaapi for hardware acceleration",
+    "description": "Plugin that adds transcode profiles using vaapi for hardware acceleration, with additional support for RC Mode settings and direct copy of original video dimensions based on the original repository",
     "engine": {
         "peertube": ">=5.1.0"
     },
@@ -10,9 +10,9 @@
         "peertube",
         "plugin"
     ],
-    "homepage": "https://github.com/TheoLeCalvar/peertube-plugin-hardware-transcode-vaapi",
+    "homepage": "https://github.com/DreamKex/peertube-plugin-hardware-transcode-vaapi.git",
     "author": "gdsn",
-    "bugs": "https://github.com/TheoLeCalvar/peertube-plugin-hardware-transcode-vaapi",
+    "bugs": "https://github.com/DreamKex/peertube-plugin-hardware-transcode-vaapi.git",
     "library": "./dist/main.js",
     "files": [
         "/dist"
@@ -22,7 +22,7 @@
     "clientScripts": [],
     "translations": {},
     "scripts": {
-        "clean": "rm -rf dist/*",
+        "clean": "rimraf dist/*",
         "prepare": "npm run build",
         "build": "npx tsc --build src/tsconfig.json",
         "watch": "npx tsc --build src/tsconfig.json --watch"
@@ -30,6 +30,7 @@
     "devDependencies": {
         "@peertube/peertube-types": "^5.1.0",
         "@tsconfig/node16": "^1.0.3",
+        "rimraf": "^5.0.1",
         "typescript": "^5.0.4"
     }
 }
